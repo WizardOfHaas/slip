@@ -29,171 +29,67 @@
 ;
 ;Returns:
 ;   SI - token tree
+
+;;I gotta change this to set SI to next part of string, DI to cons
 parse:
     call sprint
     call newline
 
-    cmp byte [si], ')'
-    je .done
+    cmp byte [si], '('              ;This is the start of an S-expression
+    je .new_list
+    jne .string
 
-    cmp byte [si], 0
-    je .done
-
-    cmp byte [si], '('          ;Is this the start of an S-expression
-    je .start_list              ;Then we need to start a new list
-
-    ;Parsing rules for other token types will go here...
-    jmp .string
-
-    xor si, si                  ;THIS IS FOR ERROR HANDLING, WILL NEED TO BE IMPLEMENTED LATER...
+    mov si, 0
     jmp .done
 
 .string:
-    call terminate_token        ;Terminate the token
-    pushf
-    push si
+    call terminate_token            ;Terminate the token to start with
 
-    mov di, si                  ;Grab the string's location
-    make_cons 0, di, FLAG_STR   ;Make a new cons cell that points to the string
-    mov di, si                  ;Save over the new cons
-
+    pushf                           ;Save flags, we will check if this is the end of a token leter
+    push si                         ;...and save string pointer
+    mov di, si
+    make_cons 0, di, FLAG_STR       ;Make a cons for this token
+    mov di, si
     pop si
-    popf        ;;;The termination case needs to be smarter... right now I stop on internal closes
-                ;;;;    I changed terminate to detect ") " as the end of a token
-                ;;;     so instead of ending the routine now, I need to recur
-                ;;;     then terminate if I hit a 0
-    ;jc .done   ;;; <- just dropping this is actually really close!
-
-    ;Now we need to parse something... agian
-    ;At this point SI is the original string passed to parse
-    push di                     ;Protect our current cons cell
-    call str_advance            ;Advance to next token
-    call parse                  ;Pull a parse
-    pop di                      ;DI is back to the current cons cell
-    set_cons_address di, si     ;Make the current cons point to the address of the next cons
-    mov si, di                  ;We want to return the list in SI
-
-    jmp .done
-
-.start_list:
-    push si
-    make_cons 0, 0, FLAG_POINTER    ;Make node cons to represent new expression
-    mov di, si                      ;Save it to DI
-    pop si
-
-    ;We know the first part here will be a raw string, so terminate it
-    inc si
-    call terminate_token
-    pushf
-    push si
-
-    mov bx, si
-    make_cons 0, bx, FLAG_STR   ;Start the new cons, it points to the string
-    set_cons_data di, si        ;Set the node cons to point to the string cons
-    mov bx, si                  ;Save the cons cell for later
-
-    pop si                      ;SI is back to holding the string (tm)
     popf
 
-    ;If carry is set then the token ended with a ), we are done
-    ;If carry is clear then the token ended in a " ", we can keep going
-    ;jc .done
-
-    ;Now we need to parse something... agian
-    ;this is a little different since for ( we need to return the right node
-    ;A rundown:
-    ;   SI - current string being parsed
-    ;   DI - Root cons for this S-expression
-    ;   BX - Cons pointing to current token
-    push di                     ;Protect our current cons cell
-    push bx
-    call str_advance            ;Advance to next token
-    call parse                  ;Pull a parse
-    pop bx
-    pop di                      ;DI is back to the current cons cell
-    set_cons_address bx, si     ;Make the current cons point to the address of the next cons
-    mov si, di                  ;We want to return the list in SI
-
-.done:
-    ret
-
-;I am in pain, lets try the most brute-force way possible
-;   No tokens! No tree structure! We are doing assembly language string comprehension, sucka!
-;       This should just work (tm) since LISP is structured for simple parsing and execution
-;
-;   SI - String to evaluate, as bare 0-terminated string...
-;
-;Returns:
-;   SI - pointer to cons cell, or to an atom
-;   DI - Points to next part of string to consume
-eval:
-    call sprint
-    call newline
+    ;At this stop SI = token string, DI = token cons, stc if end of tokens
+    ;If stc, then set SI = DI to return cons, and ret
+    ;If clc, then parse another token and append it to the cons at DI, then return with SI = DI
+    jc .string_done
 
     call advance_past_spaces
-
-    ;Make sure this is an S-expression
-    mov al, byte [si]
-    cmp al, '('
-    jne .atom       ;Otherwise, this is a bare atom
-
-    inc si          ;Get past the opening paren
-
-    ;Next, we need to terimate on the next space
-    call terminate_token
-
-    call search_primatives  ;Check the lookup table
-    cmp di, 0               ;Throw an error if we have no pointer
-    je .err
-
-    call str_advance        ;Load SI up with string folowing the function
-    call word [di]          ;Then fire off the primative!
-    jmp .done
-.atom:                      ;This will need to return a pointer to the atom
-    ;Figure out what we actually have here...
-    cmp byte [si], "'"              ;This is a string
-    je .string
-
-    cmp byte [si], '"'
-    je .string
-
-;;ORIGINAL LOGIC FOR ABSTRACT SYMBOLS
-;;This needs to be changed to search the defs table
-
-    ;Terminate the token
-    call terminate_token
-    mov di, si
-
-    call alloc_cons                 ;Allocate an empty cons
-    mov word [si + 2], di           ;Set the data part to point to the token
-    ;mov byte [si + 4], FLAG_POINTER ;Set flag as pointer
-
-    ;This should actually be flagged as a pointer, but just say these are "strings" for testing
-    mov byte [si + 4], FLAG_STR     ;Set the flag as a pointer (make str flag later...)
-
-    jmp .next
-.string:
-    ;Replace the terminating "/' with a terminating 0
-    mov al, byte [si]
-    mov ah, 0
-    inc si
-    call str_replace
-    mov di, si
-
-    call alloc_cons                 ;Make a new cons
-    mov word [si + 2], di           ;Set the data part to point to this token
-    mov byte [si + 4], FLAG_STR     ;Set the flag as a string
-
-    jmp .next
-.next:
-    ;Advance to next token
     push si
-    mov si, di
-    call str_advance
-    mov di, si
+    push di
+    ;call parse
+    pop di
+
+    set_cons_address di, si
+
     pop si
     jmp .done
-.err:
+
+.string_done:
+    mov si, di
+    jmp .done
+
+.new_list:
+    push si
+    make_cons 0, 0, FLAG_POINTER    ;Make the root cons of this new list
+    mov di, si                      ;This new cons is our destination
+    pop si                          ;Now we need to parse what's inside
+
+    inc si                          ;Move past the opening (
+    call parse                      ;Recur
+    
+    cmp si, 0                       ;Skip nothings
+    je .next_new_list
+
+    set_cons_data di, si            ;Set root cons to point at new cons
+
+.next_new_list:
+    mov si, di                      ;Move address of root cons into source
+
 .done:
     ret
 
@@ -331,6 +227,9 @@ search_primatives:
     add di, 1                               ;Then advance past the terminator
 .done:
     pop si
+    ret
+
+eval:
     ret
 
 _primative_table_len: db 7
